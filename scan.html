@@ -1,0 +1,643 @@
+</style>
+</head>
+<body>
+    <div class="container" style="min-height: 100vh; display: flex; align-items: center; justify-content: center;">
+        <button onclick="PayStarsApp.showScanQrPopup(true);" data-haptic="warning" oncontextmenu="return false;" style="padding: 16px 24px; font-size: 18px; border-radius: 12px;">
+            Відкрити сканер
+        </button>
+    </div>
+
+    
+
+    <script>
+        const PayStarsApp = {
+            initDone: false,
+            webApp: null,
+            currentPage: 'main-page',
+            userId: null,
+
+            init: function() {
+                if (this.initDone) return true;
+                if (window.Telegram && window.Telegram.WebApp) {
+                    this.webApp = Telegram.WebApp;
+                    this.webApp.ready();
+                    this.webApp.expand();
+                    this.initDone = true;
+
+                    const user = this.webApp.initDataUnsafe?.user;
+                    if (user) {
+                        this.userId = user.id;
+                        console.log('User ID:', this.userId);
+                    }
+
+                    if (window.location.search) {
+                        history.replaceState({}, '', window.location.pathname);
+                    }
+
+                    console.log('Telegram WebApp initialized');
+                    return true;
+                }
+                console.error('Telegram WebApp not available');
+                return false;
+            },
+
+            openLink: function(url) {
+                if (!this.init()) return;
+                this.webApp.HapticFeedback.impactOccurred('light');
+                try {
+                    this.webApp.openLink(url);
+                } catch (error) {
+                    console.error('Error opening link:', error);
+                    window.location.href = url;
+                }
+            },
+
+            setEmojiStatus: function(element, emojiId) {
+                const feedbackEl = element.querySelector('.status-feedback');
+                if (!this.init()) {
+                    this.showFeedback(feedbackEl, 'WebApp not available', 3000);
+                    return;
+                }
+                if (!this.webApp.isVersionAtLeast('8.0')) {
+                    this.showFeedback(feedbackEl, 'Update Telegram app', 3000);
+                    return;
+                }
+                this.webApp.HapticFeedback.impactOccurred('light');
+                try {
+                    this.webApp.setEmojiStatus(emojiId, null, (success) => {
+                        if (success) {
+                            this.showFeedback(feedbackEl, 'Status set!', 2000);
+                            this.webApp.HapticFeedback.notificationOccurred('success');
+                        } else {
+                            this.showFeedback(feedbackEl, 'Not set', 3000);
+                            this.webApp.HapticFeedback.notificationOccurred('error');
+                        }
+                    });
+                } catch (error) {
+                    console.error('Error setting emoji status:', error);
+                    this.showFeedback(feedbackEl, 'Error', 3000);
+                }
+            },
+
+            showScanQrPopup: function(linksOnly) {
+                if (!this.init()) return;
+                if (!this.webApp.isVersionAtLeast('6.7')) {
+                    console.error('QR scanning requires Telegram WebApp version 6.7 or higher');
+                    return;
+                }
+                this.webApp.HapticFeedback.impactOccurred('light');
+                try {
+                    this.webApp.showScanQrPopup(
+                        { text: linksOnly ? 'Scan a QR code with a link' : 'Scan any QR code' },
+                        (result) => {
+                            console.log('QR code scanned:', result);
+                            this.webApp.closeScanQrPopup();
+                            if (linksOnly && result.startsWith('http')) {
+                                this.openLink(result);
+                            }
+                            this.saveScanHistory(result);
+                            if (this.currentPage === 'scan-history-page') {
+                                this.showScanHistory();
+                            }
+                            return true;
+                        }
+                    );
+                } catch (error) {
+                    console.error('Error scanning QR code:', error);
+                }
+            },
+
+            saveScanHistory: function(result) {
+                if (!this.userId) return;
+                const key = `scan_history_${this.userId}`;
+                this.webApp.DeviceStorage.getItem(key, (error, value) => {
+                    let history = [];
+                    if (!error && value) {
+                        try {
+                            const parsed = JSON.parse(value);
+                            if (Array.isArray(parsed)) {
+                                history = parsed;
+                            } else {
+                                console.warn('Invalid scan history format, resetting to empty array');
+                            }
+                        } catch (e) {
+                            console.error('Error parsing scan history in saveScanHistory:', e, 'Value:', value);
+                        }
+                    }
+                    history.push({
+                        timestamp: new Date().toISOString(),
+                        result
+                    });
+                    this.webApp.DeviceStorage.setItem(key, JSON.stringify(history), (error, success) => {
+                        if (error) {
+                            console.error('Error saving scan history:', error);
+                        } else if (success) {
+                            console.log('Scan history saved');
+                        }
+                    });
+                });
+            },
+
+            showScanHistory: function() {
+                if (!this.userId) return;
+                const key = `scan_history_${this.userId}`;
+                const historyTable = document.getElementById('scan-history-table');
+                const historyList = document.getElementById('scan-history-list');
+                const noHistoryMessage = document.getElementById('no-history-message');
+                historyList.innerHTML = '';
+                this.webApp.DeviceStorage.getItem(key, (error, value) => {
+                    if (error) {
+                        console.error('DeviceStorage error in showScanHistory:', error);
+                        historyTable.style.display = 'none';
+                        noHistoryMessage.style.display = 'block';
+                        noHistoryMessage.textContent = 'Error loading scan history';
+                        return;
+                    }
+                    if (!value) {
+                        historyTable.style.display = 'none';
+                        noHistoryMessage.style.display = 'block';
+                        noHistoryMessage.textContent = "You don't have any scan history yet.";
+                        return;
+                    }
+                    try {
+                        const history = JSON.parse(value);
+                        if (!Array.isArray(history)) {
+                            console.warn('Scan history is not an array:', history);
+                            historyTable.style.display = 'none';
+                            noHistoryMessage.style.display = 'block';
+                            noHistoryMessage.textContent = 'Invalid scan history format';
+                            return;
+                        }
+                        if (history.length === 0) {
+                            historyTable.style.display = 'none';
+                            noHistoryMessage.style.display = 'block';
+                            noHistoryMessage.textContent = "You don't have any scan history yet.";
+                        } else {
+                            historyTable.style.display = 'block';
+                            noHistoryMessage.style.display = 'none';
+                            history.forEach(item => {
+                                if (item.timestamp && item.result) {
+                                    const tr = document.createElement('tr');
+                                    const date = new Date(item.timestamp);
+                                    const formattedDate = `${date.getUTCDate().toString().padStart(2, '0')}.${(date.getUTCMonth() + 1).toString().padStart(2, '0')}.${date.getUTCFullYear()}`;
+                                    const formattedTime = `${date.getUTCHours().toString().padStart(2, '0')}:${date.getUTCMinutes().toString().padStart(2, '0')}:${date.getUTCSeconds().toString().padStart(2, '0')}`;
+                                    tr.innerHTML = `<td><div class="date-time">${formattedDate}<br>${formattedTime}</div></td><td>${item.result}</td>`;
+                                    historyList.appendChild(tr);
+                                } else {
+                                    console.warn('Invalid history item:', item);
+                                }
+                            });
+                        }
+                    } catch (e) {
+                        console.error('Error parsing scan history in showScanHistory:', e, 'Value:', value);
+                        historyTable.style.display = 'none';
+                        noHistoryMessage.style.display = 'block';
+                        noHistoryMessage.textContent = 'Error loading scan history';
+                    }
+                });
+            },
+
+            clearScanHistory: function() {
+                if (!this.userId) return;
+                this.webApp.showConfirm('Are you sure you want to clear your scan history?', (confirmed) => {
+                    if (confirmed) {
+                        const key = `scan_history_${this.userId}`;
+                        this.webApp.DeviceStorage.removeItem(key, (error, success) => {
+                            if (error) {
+                                console.error('Error clearing scan history:', error);
+                            } else if (success) {
+                                console.log('Scan history cleared');
+                                this.showScanHistory();
+                            }
+                        });
+                    }
+                });
+            },
+
+            searchNFT: async function() {
+                if (!this.init()) return;
+
+                const nameInput = document.getElementById('nft-name-input').value.trim();
+                const numberInput = document.getElementById('nft-number-input').value.trim();
+                const noResultMessage = document.getElementById('no-result-message');
+
+                if (!nameInput || !numberInput) {
+                    this.showFeedback(noResultMessage, 'Please enter both NFT name and number', 3000);
+                    return;
+                }
+
+                const input = `${nameInput}-${numberInput}`;
+                const resultContainer = document.getElementById('nft-result');
+                const infoContainer = document.getElementById('nft-info');
+                const imageElement = document.getElementById('nft-image');
+                const noImageMessage = document.getElementById('no-image-message');
+
+                resultContainer.style.display = 'none';
+                noResultMessage.style.display = 'block';
+                noResultMessage.textContent = 'Searching...';
+                imageElement.style.display = 'none';
+                noImageMessage.style.display = 'none';
+
+                let imageLoaded = false;
+
+                const maxRetries = 3;
+                let attempt = 0;
+
+                while (attempt < maxRetries) {
+                    try {
+                        const proxyUrl = 'https://api.allorigins.win/raw?url=';
+                        const nftUrl = `${proxyUrl}${encodeURIComponent(`https://t.me/nft/${input}`)}`;
+                        const imageUrl = `https://nft.stel.com/gift/${nameInput}-${numberInput}.webp`;
+
+                        console.log('Attempting to load image:', imageUrl);
+
+                        await new Promise((resolve) => {
+                            console.log('Loading image:', imageUrl);
+                            imageElement.src = imageUrl;
+                            imageElement.onload = () => {
+                                console.log('Image loaded successfully');
+                                imageLoaded = true;
+                                resolve();
+                            };
+                            imageElement.onerror = () => {
+                                console.warn('Failed to load image:', imageUrl);
+                                imageLoaded = false;
+                                resolve();
+                            };
+                            setTimeout(resolve, 5000);
+                        });
+
+                        const response = await fetch(nftUrl, {
+                            method: 'GET',
+                            headers: {
+                                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+                                'Accept-Language': 'en-US,en;q=0.9',
+                                'Referer': 'https://a-ttgme.stel.com/',
+                                'Origin': window.location.origin || 'https://paystars.app'
+                            }
+                        });
+
+                        console.log('Response status:', response.status, 'URL:', nftUrl);
+                        console.log('Response headers:', Object.fromEntries(response.headers.entries()));
+
+                        if (!response.ok) {
+                            const errorText = await response.text().catch(() => 'No error text');
+                            console.error('Error response body:', errorText);
+                            throw new Error(`HTTP error ${response.status}: ${response.status === 404 ? 'NFT not found' : response.status === 403 ? 'Access denied' : response.status === 500 ? 'Proxy server error' : 'Server error'}`);
+                        }
+
+                        const text = await response.text();
+                        console.log('Received HTML (first 500 chars):', text.slice(0, 500));
+
+                        const parser = new DOMParser();
+                        const doc = parser.parseFromString(text, 'text/html');
+                        const table = doc.querySelector('.tgme_gift_table');
+
+                        if (!table) {
+                            console.error('Table .tgme_gift_table not found in HTML');
+                            throw new Error('NFT data not found');
+                        }
+
+                        const rows = table.querySelectorAll('tr');
+                        const nftData = {};
+                        rows.forEach(row => {
+                            const th = row.querySelector('th')?.textContent.trim();
+                            const td = row.querySelector('td');
+                            if (th && td) {
+                                if (th === 'Owner') {
+                                    const ownerElement = td.cloneNode(true);
+                                    const photoElement = ownerElement.querySelector('.tgme_gift_owner_photo');
+                                    if (photoElement) photoElement.remove();
+                                    const linkElement = ownerElement.querySelector('a');
+                                    const ownerName = linkElement ? linkElement.textContent.trim() : ownerElement.textContent.trim() || 'Anonymous';
+                                    if (linkElement) {
+                                        const href = linkElement.getAttribute('href');
+                                        nftData[th] = `<span class="cat-avatar">👤</span><a href="${href}" onclick="PayStarsApp.openLink('${href}'); return false;">${ownerName}</a>`;
+                                    } else {
+                                        nftData[th] = `<span class="cat-avatar">👤</span>${ownerName}`;
+                                    }
+                                } else {
+                                    nftData[th] = td.innerHTML.trim();
+                                }
+                            }
+                        });
+
+                        nftData['Model'] = 'Choco Dream <span class="percent-bubble">15%</span>';
+                        nftData['Backdrop'] = 'French Blue <span class="percent-bubble">1.8%</span>';
+                        nftData['Symbol'] = 'Pig <span class="percent-bubble">30%</span>';
+
+                        if (Object.keys(nftData).length === 0) {
+                            throw new Error('NFT data is empty');
+                        }
+
+                        infoContainer.innerHTML = `
+                            <tr><th>Owner</th><td>${nftData['Owner'] || '<span class="cat-avatar">👤</span>Anonymous'}</td></tr>
+                            <tr><th>Model</th><td>${nftData['Model'] || 'N/A'}</td></tr>
+                            <tr><th>Backdrop</th><td>${nftData['Backdrop'] || 'N/A'}</td></tr>
+                            <tr><th>Symbol</th><td>${nftData['Symbol'] || 'N/A'}</td></tr>
+                            <tr><th>Quantity</th><td>${nftData['Quantity'] || 'N/A'}</td></tr>
+                        `;
+
+                        resultContainer.style.display = 'block';
+                        noResultMessage.style.display = 'none';
+                        document.getElementById('nft-name-input').value = '';
+                        document.getElementById('nft-number-input').value = '';
+
+                        if (imageLoaded) {
+                            imageElement.style.display = 'block';
+                            noImageMessage.style.display = 'none';
+                        } else {
+                            imageElement.style.display = 'none';
+                            noImageMessage.style.display = 'none';
+                        }
+
+                        this.saveNFTSearchHistory(input, nftData, imageLoaded ? imageUrl : null);
+                        this.showNFTSearchHistory();
+
+                        this.webApp.HapticFeedback.notificationOccurred('success');
+                        return;
+                    } catch (error) {
+                        attempt++;
+                        console.error(`Attempt ${attempt} failed:`, error.message);
+                        if (attempt >= maxRetries) {
+                            console.error('Error searching NFT:', error.message);
+                            noResultMessage.textContent = error.message.includes('NFT data') 
+                                ? 'NFT data not found' 
+                                : error.message.includes('HTTP') 
+                                ? error.message 
+                                : error.message.includes('NetworkError') || error.message.includes('Failed to fetch')
+                                ? 'Network error: Please check your connection or try again later'
+                                : 'Connection error or proxy issue';
+                            this.webApp.HapticFeedback.notificationOccurred('error');
+                            imageElement.style.display = 'none';
+                            noImageMessage.style.display = 'none';
+                            resultContainer.style.display = 'block';
+                        } else {
+                            console.log(`Retrying... (${attempt + 1}/${maxRetries})`);
+                            await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+                        }
+                    }
+                }
+            },
+
+            saveNFTSearchHistory: function(nftName, nftData, imageUrl) {
+                if (!this.userId) return;
+                const key = `nft_search_history_${this.userId}`;
+                this.webApp.DeviceStorage.getItem(key, (error, value) => {
+                    let history = [];
+                    if (!error && value) {
+                        try {
+                            history = JSON.parse(value);
+                            if (!Array.isArray(history)) history = [];
+                        } catch (error) {
+                            console.error('Error parsing NFT search history:', error);
+                        }
+                    }
+                    history.push({
+                        timestamp: new Date().toISOString(),
+                        nftName,
+                        nftData,
+                        imageUrl
+                    });
+                    this.webApp.DeviceStorage.setItem(key, JSON.stringify(history), (error, success) => {
+                        if (error) {
+                            console.error('Error saving NFT search history:', error);
+                        } else if (success) {
+                            console.log('NFT search history saved');
+                        }
+                    });
+                });
+            },
+
+            showNFTSearchHistory: function() {
+                if (!this.userId) return;
+                const key = `nft_search_history_${this.userId}`;
+                const historyTable = document.getElementById('nft-search-history-table');
+                const historyList = document.getElementById('nft-search-history-list');
+                const noResultMessage = document.getElementById('no-result-message');
+                historyList.innerHTML = '';
+
+                this.webApp.DeviceStorage.getItem(key, (error, value) => {
+                    if (error || !value) {
+                        historyTable.style.display = 'none';
+                        noResultMessage.style.display = 'block';
+                        noResultMessage.textContent = 'No NFT search history yet.';
+                        return;
+                    }
+                    try {
+                        const history = JSON.parse(value);
+                        if (!Array.isArray(history) || history.length === 0) {
+                            historyTable.style.display = 'none';
+                            noResultMessage.style.display = 'block';
+                            noResultMessage.textContent = 'No NFT search history yet.';
+                            return;
+                        }
+                        historyTable.style.display = 'block';
+                        noResultMessage.style.display = 'none';
+                        history.forEach(item => {
+                            if (item.timestamp && item.nftName) {
+                                const tr = document.createElement('tr');
+                                const date = new Date(item.timestamp);
+                                const formattedDate = `${date.getUTCDate().toString().padStart(2, '0')}.${(date.getUTCMonth() + 1).toString().padStart(2, '0')}.${date.getUTCFullYear()}`;
+                                const formattedTime = `${date.getUTCHours().toString().padStart(2, '0')}:${date.getUTCMinutes().toString().padStart(2, '0')}:${date.getUTCSeconds().toString().padStart(2, '0')}`;
+                                tr.innerHTML = `<td><div class="date-time">${formattedDate}<br>${formattedTime}</div></td><td>${item.nftName}</td>`;
+                                tr.style.cursor = 'pointer';
+                                tr.addEventListener('click', () => this.showNFTModal(item));
+                                historyList.appendChild(tr);
+                            }
+                        });
+                    } catch (error) {
+                        console.error('Error parsing NFT search history:', error);
+                        historyTable.style.display = 'none';
+                        noResultMessage.style.display = 'block';
+                        noResultMessage.textContent = 'Error loading NFT search history';
+                    }
+                });
+            },
+
+            clearNFTSearchHistory: function() {
+                if (!this.userId) return;
+                this.webApp.showConfirm('Are you sure you want to clear your NFT search history?', (confirmed) => {
+                    if (confirmed) {
+                        const key = `nft_search_history_${this.userId}`;
+                        this.webApp.DeviceStorage.removeItem(key, (error, success) => {
+                            if (error) {
+                                console.error('Error clearing NFT search history:', error);
+                            } else if (success) {
+                                console.log('NFT search history cleared');
+                                this.showNFTSearchHistory();
+                            }
+                        });
+                    }
+                });
+            },
+
+            showNFTModal: function(item) {
+                const modal = document.getElementById('nft-modal');
+                const modalImage = document.getElementById('modal-nft-image');
+                const modalNoImage = document.getElementById('modal-no-image-message');
+                const modalInfo = document.getElementById('modal-nft-info');
+
+                modalImage.src = item.imageUrl || '';
+                modalImage.style.display = item.imageUrl ? 'block' : 'none';
+                modalNoImage.style.display = item.imageUrl ? 'none' : 'block';
+
+                let owner = item.nftData['Owner'] 
+                    ? item.nftData['Owner'].replace(/<i class="tgme_gift_owner_photo[^>]*>.*?<\/i>/gi, '')
+                    : '<span class="cat-avatar">👤</span>Anonymous';
+                if (!owner.includes('<span class="cat-avatar">')) {
+                    const linkMatch = owner.match(/<a href="([^"]+)">([^<]+)<\/a>/);
+                    if (linkMatch) {
+                        const href = linkMatch[1];
+                        const name = linkMatch[2];
+                        owner = `<span class="cat-avatar">👤</span><a href="${href}" onclick="PayStarsApp.openLink('${href}'); return false;">${name}</a>`;
+                    } else {
+                        owner = `<span class="cat-avatar">👤</span>${owner}`;
+                    }
+                }
+
+                modalInfo.innerHTML = `
+                    <tr><th>Owner</th><td>${owner}</td></tr>
+                    <tr><th>Model</th><td>${item.nftData['Model'] || 'N/A'}</td></tr>
+                    <tr><th>Backdrop</th><td>${item.nftData['Backdrop'] || 'N/A'}</td></tr>
+                    <tr><th>Symbol</th><td>${item.nftData['Symbol'] || 'N/A'}</td></tr>
+                    <tr><th>Quantity</th><td>${item.nftData['Quantity'] || 'N/A'}</td></tr>
+                `;
+                modal.style.display = 'flex';
+                this.webApp.HapticFeedback.impactOccurred('light');
+            },
+
+            closeNFTModal: function() {
+                const modal = document.getElementById('nft-modal');
+                modal.style.display = 'none';
+                this.webApp.HapticFeedback.impactOccurred('light');
+            },
+
+            showFeedback: function(element, message, duration) {
+                if (!element) return;
+                element.textContent = message;
+                element.style.display = 'block';
+                setTimeout(() => {
+                    element.textContent = '';
+                    element.style.display = 'none';
+                }, duration);
+            },
+
+            switchPage: function(pageId) {
+                document.querySelectorAll('.page').forEach(page => {
+                    page.classList.remove('active');
+                });
+                const page = document.querySelector(`#${pageId}`);
+                if (page) page.classList.add('active');
+
+                document.querySelectorAll('.nav-link').forEach(link => {
+                    link.classList.remove('active');
+                });
+                const navLink = document.querySelector(`.nav-link[data-page="${pageId}"]`);
+                if (navLink) navLink.classList.add('active');
+
+                this.currentPage = pageId;
+                this.webApp.HapticFeedback.impactOccurred('light');
+
+                history.pushState({ page: pageId }, '', window.location.pathname);
+                if (pageId === 'scan-history-page') {
+                    this.showScanHistory();
+                } else if (pageId === 'nft-search-page') {
+                    this.showNFTSearchHistory();
+                }
+            },
+
+            toggleTheme: function() {
+                if (!this.init()) return;
+                const isLight = document.body.classList.toggle('light-theme');
+                const theme = isLight ? 'light' : 'dark';
+                this.webApp.HapticFeedback.impactOccurred('light');
+
+                document.body.style.setProperty('--tg-theme-bg-color', isLight ? '#ffffff' : '');
+                document.body.style.setProperty('--tg-theme-text-color', isLight ? '#000000' : '');
+                document.body.style.setProperty('--tg-theme-button-color', isLight ? '#6200ea' : '');
+                document.body.style.setProperty('--tg-theme-button-text-color', isLight ? '#ffffff' : '');
+                document.body.style.setProperty('--tg-theme-secondary-bg-color', isLight ? 'rgba(0, 0, 0, 0.05)' : '');
+                document.body.style.setProperty('--tg-theme-hint-color', isLight ? '#666666' : '');
+
+                if (this.userId) {
+                    this.webApp.DeviceStorage.setItem(`theme${this.userId}`, theme, (error, success) => {
+                        if (error) {
+                            console.error('Error saving theme:', error);
+                        } else if (success) {
+                            console.log('Theme saved:', theme);
+                        }
+                    });
+                }
+            },
+
+            loadTheme: function() {
+                if (!this.userId) return;
+                this.webApp.DeviceStorage.getItem(`theme_${this.userId}`, (error, value) => {
+                    if (!error && value === 'light') {
+                        document.body.classList.add('light-theme');
+                        document.body.style.setProperty('--tg-theme-bg-color', '#ffffff');
+                        document.body.style.setProperty('--tg-theme-text-color', '#000000');
+                        document.body.style.setProperty('--tg-theme-button-color', '#6200ea');
+                        document.body.style.setProperty('--tg-theme-button-text-color', '#ffffff');
+                        document.body.style.setProperty('--tg-theme-secondary-bg-color', 'rgba(0, 0, 0, 0.05)');
+                        document.body.style.setProperty('--tg-theme-hint-color', '#666666');
+                    } else {
+                        if (this.webApp) {
+                            document.body.style.setProperty('--tg-theme-bg-color', this.webApp.themeParams.bg_color);
+                            document.body.style.setProperty('--tg-theme-text-color', this.webApp.themeParams.text_color);
+                            document.body.style.setProperty('--tg-theme-button-color', this.webApp.themeParams.button_color);
+                            document.body.style.setProperty('--tg-theme-button-text-color', this.webApp.themeParams.button_text_color);
+                            document.body.style.setProperty('--tg-theme-secondary-bg-color', this.webApp.themeParams.secondary_bg_color);
+                            document.body.style.setProperty('--tg-theme-hint-color', this.webApp.themeParams.hint_color);
+                        }
+                    }
+                });
+            },
+
+            setupHapticFeedback: function() {
+                document.querySelectorAll('[data-haptic]').forEach(el => {
+                    el.addEventListener('click', () => {
+                        if (this.webApp) {
+                            this.webApp.HapticFeedback.notificationOccurred(el.dataset.haptic);
+                        }
+                    });
+                });
+            },
+
+            setupNavigation: function() {
+                document.querySelectorAll('.nav-link').forEach(button => {
+                    if (button.dataset.page) {
+                        button.addEventListener('click', () => {
+                            const pageId = button.dataset.page;
+                            this.switchPage(pageId);
+                        });
+                    }
+                    button.addEventListener('contextmenu', (e) => {
+                        e.preventDefault();
+                    });
+                });
+            },
+
+            setupButtonContextMenuPrevention: function() {
+                document.querySelectorAll('.links button, .clear-history-btn').forEach(button => {
+                    button.addEventListener('contextmenu', (e) => {
+                        e.preventDefault();
+                    });
+                });
+            }
+        };
+
+        window.addEventListener('popstate', (event) => {
+            const pageId = event.state?.page || 'main-page';
+            PayStarsApp.switchPage(pageId);
+        });
+
+        document.addEventListener('DOMContentLoaded', () => {
+            PayStarsApp.init();
+            PayStarsApp.setupHapticFeedback();
+        });
+    </script>
+</body>
+</html>
