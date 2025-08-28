@@ -74,7 +74,7 @@
                     console.error('QR scanning requires Telegram WebApp version 6.7 or higher');
                     return;
                 }
-                this.webApp.HapticFeedback.impactOccurred('warning');
+                this.webApp.HapticFeedback.notificationOccurred('warning');
                 try {
                     this.webApp.showScanQrPopup(
                         { text: 'Скануйте QR для оплати' },
