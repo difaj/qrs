@@ -19,9 +19,11 @@
         }
         .container {
             display: flex;
+            flex-direction: column;
             align-items: center;
             justify-content: center;
             min-height: 100vh;
+            gap: 20px;
         }
         button {
             padding: 16px 24px;
@@ -37,18 +39,34 @@
             background-color: var(--tg-theme-button-color, #bb86fc);
             color: var(--tg-theme-button-text-color, #ffffff);
         }
+        #confirm-container {
+            display: none;
+            flex-direction: column;
+            gap: 10px;
+            text-align: center;
+        }
+        #qr-result {
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <button onclick="PayStarsApp.showScanQrPopup(true);" data-haptic="warning" oncontextmenu="return false;">
+        <button id="scan-button" onclick="PayStarsApp.showScanQrPopup(true);" data-haptic="warning" oncontextmenu="return false;">
             Відкрити сканер
         </button>
+        <div id="confirm-container">
+            <div id="qr-result"></div>
+            <button id="confirm-button" data-haptic="success">Підтвердити оплату</button>
+            <button id="cancel-button" data-haptic="light">Скасувати</button>
+        </div>
     </div>
     <script>
         const PayStarsApp = {
             initDone: false,
             webApp: null,
+            lastScannedQr: null,
 
             init: function() {
                 if (this.initDone) return true;
@@ -57,7 +75,7 @@
                     this.webApp.ready();
                     this.webApp.expand();
                     this.initDone = true;
-                    console.log('Telegram WebApp initialized');
+                    console.log('Telegram WebApp initialized, version:', this.webApp.version);
                     return true;
                 }
                 console.error('Telegram WebApp not available');
@@ -72,6 +90,7 @@
                 }
                 if (!this.webApp.isVersionAtLeast('6.7')) {
                     console.error('QR scanning requires Telegram WebApp version 6.7 or higher');
+                    alert('Оновіть Telegram до версії 6.7 або вище для сканування QR-коду.');
                     return;
                 }
                 this.webApp.HapticFeedback.notificationOccurred('warning');
@@ -82,22 +101,45 @@
                             console.log('QR code scanned:', result);
                             this.webApp.closeScanQrPopup();
                             if (linksOnly && result.startsWith('tg://resolve/?domain=@qrp_bot')) {
-                                console.log('Valid Telegram link, opening:', result);
-                                this.webApp.openTelegramLink(result);
-                                this.webApp.close();
+                                console.log('Valid Telegram link:', result);
+                                this.lastScannedQr = result;
+                                document.getElementById('scan-button').style.display = 'none';
+                                document.getElementById('confirm-container').style.display = 'flex';
+                                document.getElementById('qr-result').textContent = `Знайдено QR-код: ${result}`;
                             } else {
                                 console.error('Invalid QR code:', result);
-                                // Повторно відкриваємо сканер для повторного сканування
+                                alert('Невалідний QR-код. Спробуйте ще раз.');
                                 setTimeout(() => this.showScanQrPopup(true), 500);
                             }
                         }
                     );
                 } catch (error) {
                     console.error('Error scanning QR code:', error);
+                    alert('Помилка сканування QR-коду: ' + error.message);
                     this.webApp.closeScanQrPopup();
-                    // Повторно відкриваємо сканер у разі помилки
                     setTimeout(() => this.showScanQrPopup(true), 500);
                 }
+            },
+
+            confirmPayment: function() {
+                if (this.lastScannedQr) {
+                    console.log('Confirming payment, opening link:', this.lastScannedQr);
+                    try {
+                        this.webApp.openTelegramLink(this.lastScannedQr);
+                    } catch (error) {
+                        console.error('Error opening Telegram link:', error);
+                        window.location.href = this.lastScannedQr; // Альтернативне перенаправлення
+                    }
+                    this.webApp.close();
+                }
+            },
+
+            cancelPayment: function() {
+                console.log('Payment cancelled');
+                document.getElementById('confirm-container').style.display = 'none';
+                document.getElementById('scan-button').style.display = 'block';
+                this.lastScannedQr = null;
+                this.webApp.HapticFeedback.notificationOccurred('light');
             },
 
             setupHapticFeedback: function() {
@@ -114,6 +156,8 @@
         document.addEventListener('DOMContentLoaded', () => {
             PayStarsApp.init();
             PayStarsApp.setupHapticFeedback();
+            document.getElementById('confirm-button').addEventListener('click', () => PayStarsApp.confirmPayment());
+            document.getElementById('cancel-button').addEventListener('click', () => PayStarsApp.cancelPayment());
         });
     </script>
 </body>
