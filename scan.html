@@ -80,9 +80,14 @@
             },
 
             showScanQrPopup: function(linksOnly) {
-                if (!this.init()) return;
+                if (!this.init()) {
+                    // Fallback to browser scanner when Telegram context is not available
+                    this.startBrowserQrScan(linksOnly);
+                    return;
+                }
                 if (!this.webApp.isVersionAtLeast('6.7')) {
                     console.error('QR scanning requires Telegram WebApp version 6.7 or higher');
+                    this.startBrowserQrScan(linksOnly);
                     return;
                 }
                 this.webApp.HapticFeedback.impactOccurred('light');
@@ -104,6 +109,86 @@
                     );
                 } catch (error) {
                     console.error('Error scanning QR code:', error);
+                    this.startBrowserQrScan(linksOnly);
+                }
+            },
+
+            // Simple browser QR scanner fallback using BarcodeDetector
+            startBrowserQrScan: async function(linksOnly) {
+                const supportsBarcodeDetector = 'BarcodeDetector' in window;
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !supportsBarcodeDetector) {
+                    alert('Сканер доступний лише в Telegram або у сумісному браузері.');
+                    return;
+                }
+
+                let mediaStream = null;
+                let rafId = null;
+                const overlay = document.createElement('div');
+                overlay.id = 'qr-overlay';
+                overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:9999;flex-direction:column;gap:12px;color:#fff;';
+
+                const video = document.createElement('video');
+                video.setAttribute('playsinline', '');
+                video.style.cssText = 'width:90vw;max-width:480px;border-radius:12px;background:#000;';
+
+                const hint = document.createElement('div');
+                hint.textContent = 'Наведіть камеру на QR-код';
+                hint.style.cssText = 'font-size:16px;opacity:0.85;';
+
+                const cancelBtn = document.createElement('button');
+                cancelBtn.textContent = 'Скасувати';
+                cancelBtn.style.cssText = 'padding:10px 16px;border-radius:10px;border:none;background:#6200ea;color:#fff;font-size:14px;cursor:pointer;';
+
+                overlay.appendChild(video);
+                overlay.appendChild(hint);
+                overlay.appendChild(cancelBtn);
+                document.body.appendChild(overlay);
+
+                const cleanup = () => {
+                    if (rafId) cancelAnimationFrame(rafId);
+                    if (mediaStream) {
+                        mediaStream.getTracks().forEach(t => t.stop());
+                    }
+                    overlay.remove();
+                };
+
+                cancelBtn.addEventListener('click', cleanup);
+
+                try {
+                    mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+                    video.srcObject = mediaStream;
+                    await video.play();
+
+                    const detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+
+                    const scan = async () => {
+                        try {
+                            const barcodes = await detector.detect(video);
+                            if (barcodes && barcodes.length > 0) {
+                                const value = barcodes[0].rawValue || '';
+                                cleanup();
+                                if (linksOnly) {
+                                    if (/^https?:\/\//i.test(value)) {
+                                        try { window.open(value, '_blank'); } catch (_) {}
+                                    } else {
+                                        alert('Знайдено QR, але це не посилання.');
+                                    }
+                                } else {
+                                    alert('Знайдено QR: ' + value);
+                                }
+                                return;
+                            }
+                        } catch (e) {
+                            // Ignore intermittent detection errors
+                        }
+                        rafId = requestAnimationFrame(scan);
+                    };
+
+                    rafId = requestAnimationFrame(scan);
+                } catch (err) {
+                    console.error('Browser QR scan error:', err);
+                    cleanup();
+                    alert('Не вдалося отримати доступ до камери. Перевірте дозволи.');
                 }
             },
 
