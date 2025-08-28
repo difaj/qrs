@@ -5,8 +5,46 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>QR Scanner</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background-color: var(--tg-theme-bg-color, #121212);
+            color: var(--tg-theme-text-color, #ffffff);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        button {
+            padding: 16px 24px;
+            font-size: 18px;
+            border-radius: 12px;
+            border: 2px solid var(--tg-theme-button-color, #bb86fc);
+            background-color: var(--tg-theme-secondary-bg-color, rgba(0,0,0,0.2));
+            color: var(--tg-theme-button-color, #bb86fc);
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        button:hover {
+            background-color: var(--tg-theme-button-color, #bb86fc);
+            color: var(--tg-theme-button-text-color, #ffffff);
+        }
+    </style>
 </head>
 <body>
+    <div class="container">
+        <button onclick="PayStarsApp.showScanQrPopup(true);" data-haptic="warning" oncontextmenu="return false;">
+            Відкрити сканер
+        </button>
+    </div>
     <script>
         const PayStarsApp = {
             initDone: false,
@@ -60,13 +98,22 @@
                     // Повторно відкриваємо сканер у разі помилки
                     setTimeout(() => this.showScanQrPopup(true), 500);
                 }
+            },
+
+            setupHapticFeedback: function() {
+                document.querySelectorAll('[data-haptic]').forEach(el => {
+                    el.addEventListener('click', () => {
+                        if (this.webApp) {
+                            this.webApp.HapticFeedback.notificationOccurred(el.dataset.haptic);
+                        }
+                    });
+                });
             }
         };
 
-        // Автоматичний запуск сканера після ініціалізації
         document.addEventListener('DOMContentLoaded', () => {
             PayStarsApp.init();
-            PayStarsApp.showScanQrPopup(true);
+            PayStarsApp.setupHapticFeedback();
         });
     </script>
 </body>
